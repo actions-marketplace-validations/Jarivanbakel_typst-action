@@ -1,12 +1,15 @@
 name: 'Compile Typst documents'
-description: 'GitHub Action to compile Typst documents'
+description: 'A cross-OS GitHub Action to compile Typst documents'
 inputs:
   input_files:
     description: 'Define the input files that need to be compiled to Typst documents'
     required: true
   working_directory:
     description: 'The working directory where all the typst files are located'
-    required: false
+    required: false  
+  token:
+    description: 'Defines the token to use to execute the git API requests with, uses `env.GITHUB_TOKEN` by default'
+    default: ${{ github.token }}
 runs:
   using: "composite"
   steps:
@@ -14,17 +17,16 @@ runs:
       shell: bash
       id: determine_os
       run: |
+        archive_extension=".tar.xz"
         if [ "$RUNNER_OS" == 'Linux' ]; 
         then
-             binary_type="unknown-linux-gnu"
-             archive_extension=".tar.gz"
+             binary_type="x86_64-unknown-linux-musl"
         elif [ "$RUNNER_OS" == 'Windows' ]; 
         then
-             binary_type="pc-windows-msvc"
+             binary_type="x86_64-pc-windows-msvc"
              archive_extension=".zip"
         else 
-             binary_type="apple-darwin"
-             archive_extension=".tar.gz"
+             binary_type="x86_64-apple-darwin"
         fi
         
         echo "binary_type=$binary_type" >> $GITHUB_OUTPUT
@@ -34,7 +36,7 @@ runs:
       shell: bash
       id: binary_exists
       run: |
-        if [ -d "typst-x86_64-${{ steps.determine_os.outputs.binary_type }}" ]; then
+        if [ -d "typst-${{ steps.determine_os.outputs.binary_type }}" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
         else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -45,31 +47,36 @@ runs:
       id: download_url
       if: steps.binary_exists.outputs.exists != 'true'
       run: |
-        binary_download_url=$(curl 'https://api.github.com/repos/typst/typst/releases/latest' | jq '.assets[]? | select( .name | contains("${{ steps.determine_os.outputs.binary_type }}")) | .browser_download_url')
+        response=$(curl --request GET \
+          --url https://api.github.com/repos/typst/typst/releases/latest \
+          --header 'authorization: Bearer ${{ inputs.token }}')
+
+        echo "$response"
+        binary_download_url=$(jq '.assets[]? | select( .name | contains("${{ steps.determine_os.outputs.binary_type }}")) | .browser_download_url' <<< "${response}")
         echo "$binary_download_url"
         echo "binary_download_url=$binary_download_url" >> $GITHUB_OUTPUT
 
     - name: Download the binary
       shell: bash
-      if: steps.binary_exists.outputs.exists != 'true'
-      run: curl -OL ${{ steps.download_url.outputs.binary_download_url }}
+      if: steps.binary_exists.outputs.exists != 'true'      
+      run: curl -O -L ${{ steps.download_url.outputs.binary_download_url }}
     
     - name: Extract the binary
       shell: bash
       if: steps.binary_exists.outputs.exists != 'true'
       run: |
-        echo Running on $RUNNER_OS extracting $binary_type$archive_extension
+        echo Running on $RUNNER_OS extracting typst-${{ steps.determine_os.outputs.binary_type }}${{ steps.determine_os.outputs.archive_extension }}
 
         if [ "$RUNNER_OS" == 'Windows' ]; 
         then
-            7z x "typst-x86_64-${{ steps.determine_os.outputs.binary_type }}${{ steps.determine_os.outputs.archive_extension }}"
+            7z x "typst-${{ steps.determine_os.outputs.binary_type }}${{ steps.determine_os.outputs.archive_extension }}"
         else
-            tar zxvf "typst-x86_64-${{ steps.determine_os.outputs.binary_type }}${{ steps.determine_os.outputs.archive_extension }}"
+            tar xf "typst-${{ steps.determine_os.outputs.binary_type }}${{ steps.determine_os.outputs.archive_extension }}"
         fi
         
         echo "$PWD"
-        echo "$PWD/typst-x86_64-${{ steps.determine_os.outputs.binary_type }}"
-        echo "$PWD/typst-x86_64-${{ steps.determine_os.outputs.binary_type }}" >> $GITHUB_PATH
+        echo "$PWD/typst-${{ steps.determine_os.outputs.binary_type }}"
+        echo "$PWD/typst-${{ steps.determine_os.outputs.binary_type }}" >> $GITHUB_PATH
         
     - name: Compile Typst documents
       shell: bash
